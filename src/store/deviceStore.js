@@ -1,53 +1,48 @@
 const devicesByIeee = new Map();
-const topicToIeeeMap = new Map();
+const topicNameToIeee = new Map();
 
-function normalizeIeee(device = {}) {
-  return (
-    device.ieee_address ||
-    device.ieeeAddr ||
-    device.ieee ||
-    device.ieeeAddress ||
-    null
-  );
+function getDeviceIeee(device = {}) {
+  return device.ieee_address || device.ieeeAddr || device.ieee || null;
 }
 
-function normalizeFriendlyName(device = {}) {
-  return (
-    device.friendly_name ||
-    device.friendlyName ||
-    device.name ||
-    "Unknown Device"
-  );
+function getFriendlyName(device = {}) {
+  return device.friendly_name || device.friendlyName || null;
 }
 
-function registerDevice(device) {
-  const ieee = normalizeIeee(device);
-  if (!ieee) return null;
+function rebuildTopicMap() {
+  topicNameToIeee.clear();
 
-  const existing = devicesByIeee.get(ieee) || {};
+  for (const device of devicesByIeee.values()) {
+    const ieee = getDeviceIeee(device);
+    const name = getFriendlyName(device);
 
-  const merged = {
-    ...existing,
-    ...device,
-    ieee_address: ieee,
-    ieeeAddr: ieee,
-    ieee,
-    friendly_name: normalizeFriendlyName(device),
-    friendlyName: normalizeFriendlyName(device),
-  };
-
-  devicesByIeee.set(ieee, merged);
-
-  const topicName = merged.friendly_name;
-  if (topicName) {
-    topicToIeeeMap.set(topicName, ieee);
+    if (ieee && name) {
+      topicNameToIeee.set(name, ieee);
+    }
   }
-
-  return merged;
 }
 
 function registerDevices(devices = []) {
-  devices.forEach(registerDevice);
+  devicesByIeee.clear();
+
+  for (const device of devices) {
+    const ieee = getDeviceIeee(device);
+    if (!ieee) continue;
+
+    if (
+      String(device?.type || "").toLowerCase() === "coordinator" &&
+      String(getFriendlyName(device) || "").toLowerCase() === "coordinator"
+    ) {
+      continue;
+    }
+
+    devicesByIeee.set(ieee, {
+      ...device,
+      ieee,
+    });
+  }
+
+  rebuildTopicMap();
   return getAllDevices();
 }
 
@@ -60,54 +55,38 @@ function getDeviceByIeee(ieee) {
 }
 
 function getDeviceByTopicName(topicName) {
-  const ieee = topicToIeeeMap.get(topicName);
+  const ieee = topicNameToIeee.get(topicName);
   if (!ieee) return null;
-  return getDeviceByIeee(ieee);
+  return devicesByIeee.get(ieee) || null;
 }
 
 function renameDeviceInStore(ieee, newName) {
   const device = devicesByIeee.get(ieee);
   if (!device) return null;
 
-  const oldName = device.friendly_name || device.friendlyName;
-  if (oldName) {
-    topicToIeeeMap.delete(oldName);
-  }
-
   const updated = {
     ...device,
     friendly_name: newName,
-    friendlyName: newName,
   };
 
   devicesByIeee.set(ieee, updated);
-  topicToIeeeMap.set(newName, ieee);
+  rebuildTopicMap();
 
   return updated;
 }
 
 function removeDeviceFromStore(ieee) {
-  const device = devicesByIeee.get(ieee);
-  if (!device) return false;
-
-  const oldName = device.friendly_name || device.friendlyName;
-  if (oldName) {
-    topicToIeeeMap.delete(oldName);
-  }
-
+  const existing = devicesByIeee.get(ieee) || null;
   devicesByIeee.delete(ieee);
-  return true;
+  rebuildTopicMap();
+  return existing;
 }
 
 module.exports = {
-  registerDevice,
   registerDevices,
   getAllDevices,
   getDeviceByIeee,
   getDeviceByTopicName,
   renameDeviceInStore,
   removeDeviceFromStore,
-  normalizeIeee,
-  normalizeFriendlyName,
-  topicToIeeeMap,
 };

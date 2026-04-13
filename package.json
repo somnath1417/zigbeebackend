@@ -1,18 +1,16 @@
 {
-  "name": "backend1",
+  "name": "zigbee-backend",
   "version": "1.0.0",
-  "description": "Zigbee2MQTT backend with Express, MQTT and Socket.IO",
-  "main": "src/server.js",
+  "description": "Zigbee2MQTT backend",
+  "main": "server.js",
   "scripts": {
-    "start": "node src/server.js",
-    "dev": "nodemon",
-    "start:prod": "NODE_ENV=production node src/server.js"
+    "start": "node server.js",
+    "dev": "nodemon server.js"
   },
   "dependencies": {
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.21.2",
-    "morgan": "^1.10.0",
     "mqtt": "^5.10.3",
     "socket.io": "^4.8.1"
   },

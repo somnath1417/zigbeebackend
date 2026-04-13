@@ -2,7 +2,7 @@ const express = require("express");
 const router = express.Router();
 
 const { getAllDevices, getDeviceByIeee } = require("../store/deviceStore");
-const { getAllStates, getSummary } = require("../store/stateStore");
+const { getAllStates } = require("../store/stateStore");
 
 const {
   requestPermitJoin,
@@ -10,23 +10,23 @@ const {
   renameDevice,
   removeDevice,
   controlDevice,
-  requestNetworkMap,
 } = require("../mqtt/mqttClient");
 
 /**
  * GET /api/devices
  */
-router.get("/devices", (req, res) => {
+router.get("/", (req, res) => {
   try {
     const devices = getAllDevices();
-    res.json({
+
+    return res.json({
       success: true,
       count: devices.length,
       data: devices,
     });
   } catch (error) {
     console.error("Get devices error:", error);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: "Failed to fetch devices",
       error: error.message,
@@ -35,19 +35,20 @@ router.get("/devices", (req, res) => {
 });
 
 /**
- * GET /api/states
+ * GET /api/devices/states
  */
 router.get("/states", (req, res) => {
   try {
     const states = getAllStates();
-    res.json({
+
+    return res.json({
       success: true,
       count: states.length,
       data: states,
     });
   } catch (error) {
     console.error("Get states error:", error);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: "Failed to fetch states",
       error: error.message,
@@ -56,73 +57,102 @@ router.get("/states", (req, res) => {
 });
 
 /**
- * GET /api/summary
- */
-router.get("/summary", (req, res) => {
-  try {
-    const devices = getAllDevices();
-    const states = getAllStates();
-    const summary = getSummary();
-
-    res.json({
-      success: true,
-      data: {
-        totalDevices: devices.length,
-        totalStates: states.length,
-        ...summary,
-      },
-    });
-  } catch (error) {
-    console.error("Get summary error:", error);
-    res.status(500).json({
-      success: false,
-      message: "Failed to fetch summary",
-      error: error.message,
-    });
-  }
-});
-
-/**
- * POST /api/pairing/start
+ * POST /api/devices/permit-join
  * body: { seconds: 120 }
  */
-router.post("/pairing/start", async (req, res) => {
+router.post("/permit-join", async (req, res) => {
   try {
-    const seconds = Number(req.body?.seconds || 120);
-    const response = await requestPermitJoin(seconds);
+    const seconds = Number(req.body?.seconds ?? 120);
 
-    res.json({
+    if (Number.isNaN(seconds) || seconds < 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Valid seconds value is required",
+      });
+    }
+
+    const result = await requestPermitJoin(seconds);
+
+    return res.json({
       success: true,
-      message: `Pairing started for ${seconds} seconds`,
-      data: response,
+      message: `Permit join started for ${seconds} seconds`,
+      data: result,
     });
   } catch (error) {
-    console.error("Start pairing error:", error);
-    res.status(500).json({
+    console.error("Permit join start error:", error);
+    return res.status(500).json({
       success: false,
-      message: "Failed to start pairing",
+      message: "Failed to start permit join",
       error: error.message,
     });
   }
 });
 
 /**
- * POST /api/pairing/stop
+ * POST /api/devices/permit-join/stop
  */
-router.post("/pairing/stop", async (req, res) => {
+router.post("/permit-join/stop", async (req, res) => {
   try {
-    const response = await stopPermitJoin();
+    const result = await stopPermitJoin();
 
-    res.json({
+    return res.json({
       success: true,
-      message: "Pairing stopped",
-      data: response,
+      message: "Permit join stopped successfully",
+      data: result,
     });
   } catch (error) {
-    console.error("Stop pairing error:", error);
-    res.status(500).json({
+    console.error("Permit join stop error:", error);
+    return res.status(500).json({
       success: false,
-      message: "Failed to stop pairing",
+      message: "Failed to stop permit join",
+      error: error.message,
+    });
+  }
+});
+
+/**
+ * POST /api/devices/:ieee/control
+ */
+router.post("/:ieee/control", async (req, res) => {
+  try {
+    const { ieee } = req.params;
+    const command = req.body;
+
+    if (!ieee) {
+      return res.status(400).json({
+        success: false,
+        message: "Device IEEE is required",
+      });
+    }
+
+    if (!command || typeof command !== "object" || Array.isArray(command)) {
+      return res.status(400).json({
+        success: false,
+        message: "Valid command object is required in request body",
+      });
+    }
+
+    const existingDevice = getDeviceByIeee(ieee);
+
+    if (!existingDevice) {
+      return res.status(404).json({
+        success: false,
+        message: "Device not found",
+      });
+    }
+
+    const result = await controlDevice(ieee, command);
+
+    return res.json({
+      success: true,
+      message: "Device command published successfully",
+      data: result,
+    });
+  } catch (error) {
+    console.error("Control device error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to control device",
       error: error.message,
     });
   }
@@ -132,7 +162,7 @@ router.post("/pairing/stop", async (req, res) => {
  * PUT /api/devices/:ieee/rename
  * body: { name: "New Device Name" }
  */
-router.put("/devices/:ieee/rename", async (req, res) => {
+router.put("/:ieee/rename", async (req, res) => {
   try {
     const { ieee } = req.params;
     const { name } = req.body;
@@ -140,27 +170,37 @@ router.put("/devices/:ieee/rename", async (req, res) => {
     if (!ieee) {
       return res.status(400).json({
         success: false,
-        message: "IEEE is required",
+        message: "Device IEEE is required",
       });
     }
 
-    if (!name || !name.trim()) {
+    if (!name || !String(name).trim()) {
       return res.status(400).json({
         success: false,
-        message: "New name is required",
+        message: "New device name is required",
       });
     }
 
-    const response = await renameDevice(ieee, name.trim());
+    const existingDevice = getDeviceByIeee(ieee);
 
-    res.json({
+    if (!existingDevice) {
+      return res.status(404).json({
+        success: false,
+        message: "Device not found",
+      });
+    }
+
+    const trimmedName = String(name).trim();
+    const result = await renameDevice(ieee, trimmedName);
+
+    return res.json({
       success: true,
       message: "Device renamed successfully",
-      data: response,
+      data: result,
     });
   } catch (error) {
     console.error("Rename device error:", error);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: "Failed to rename device",
       error: error.message,
@@ -171,97 +211,38 @@ router.put("/devices/:ieee/rename", async (req, res) => {
 /**
  * DELETE /api/devices/:ieee
  */
-router.delete("/devices/:ieee", async (req, res) => {
+router.delete("/:ieee", async (req, res) => {
   try {
     const { ieee } = req.params;
 
     if (!ieee) {
       return res.status(400).json({
         success: false,
-        message: "IEEE is required",
+        message: "Device IEEE is required",
       });
     }
 
-    const device = getDeviceByIeee(ieee);
-    if (!device) {
+    const existingDevice = getDeviceByIeee(ieee);
+
+    if (!existingDevice) {
       return res.status(404).json({
         success: false,
         message: "Device not found",
       });
     }
 
-    const response = await removeDevice(ieee);
+    const result = await removeDevice(ieee);
 
-    res.json({
+    return res.json({
       success: true,
       message: "Device removed successfully",
-      data: response,
+      data: result,
     });
   } catch (error) {
     console.error("Remove device error:", error);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: "Failed to remove device",
-      error: error.message,
-    });
-  }
-});
-
-/**
- * POST /api/devices/:ieee/control
- * body: { state: "ON" } or any valid zigbee command payload
- */
-router.post("/devices/:ieee/control", async (req, res) => {
-  try {
-    const { ieee } = req.params;
-    const command = req.body;
-
-    if (!ieee) {
-      return res.status(400).json({
-        success: false,
-        message: "IEEE is required",
-      });
-    }
-
-    if (!command || typeof command !== "object" || Array.isArray(command)) {
-      return res.status(400).json({
-        success: false,
-        message: "Valid command payload is required",
-      });
-    }
-
-    const response = await controlDevice(ieee, command);
-
-    res.json({
-      success: true,
-      message: "Device command published successfully",
-      data: response,
-    });
-  } catch (error) {
-    console.error("Control device error:", error);
-    res.status(500).json({
-      success: false,
-      message: "Failed to control device",
-      error: error.message,
-    });
-  }
-});
-
-/**
- * GET /api/network-map
- * query: ?refresh=true
- */
-router.get("/network-map", async (req, res) => {
-  try {
-    const refresh = String(req.query.refresh || "false") === "true";
-    const response = await requestNetworkMap(refresh);
-
-    res.json(response);
-  } catch (error) {
-    console.error("Network map error:", error);
-    res.status(500).json({
-      success: false,
-      message: "Failed to fetch network map",
       error: error.message,
     });
   }

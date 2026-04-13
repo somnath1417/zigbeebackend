@@ -1,16 +1,20 @@
-let ioInstance = null;
+const { Server } = require("socket.io");
+
+let io = null;
 
 function initSocket(server) {
-  const { Server } = require("socket.io");
-
-  ioInstance = new Server(server, {
+  io = new Server(server, {
     cors: {
-      origin: process.env.FRONTEND_URL || "*",
-      methods: ["GET", "POST", "PUT", "DELETE"],
+      origin: [
+        process.env.FRONTEND_URL,
+        "http://localhost:3000",
+        "http://localhost:5173",
+      ].filter(Boolean),
+      credentials: true,
     },
   });
 
-  ioInstance.on("connection", (socket) => {
+  io.on("connection", (socket) => {
     console.log("Socket connected:", socket.id);
 
     socket.on("disconnect", () => {
@@ -18,41 +22,41 @@ function initSocket(server) {
     });
   });
 
-  return ioInstance;
+  return io;
 }
 
-function emitDevices(devices) {
-  if (ioInstance) {
-    ioInstance.emit("devices_update", devices);
-  }
+function getIo() {
+  return io;
 }
 
-function emitStates(states) {
-  if (ioInstance) {
-    ioInstance.emit("states_update", states);
-  }
+function emitDevices(devices = []) {
+  if (!io) return;
+  io.emit("devices", devices);
 }
 
-function emitSummary(summary) {
-  if (ioInstance) {
-    ioInstance.emit("summary_update", summary);
-  }
+function emitStates(states = []) {
+  if (!io) return;
+  io.emit("states", states);
 }
 
-function emitMqttStatus(status) {
-  if (ioInstance) {
-    ioInstance.emit("broker_status", status);
-  }
+function emitSummary(summary = {}) {
+  if (!io) return;
+  io.emit("summary", summary);
 }
 
-function emitNetworkMap(data) {
-  if (ioInstance) {
-    ioInstance.emit("network_map_update", data);
-  }
+function emitMqttStatus(status = {}) {
+  if (!io) return;
+  io.emit("mqtt-status", status);
+}
+
+function emitNetworkMap(networkMap = {}) {
+  if (!io) return;
+  io.emit("network-map", networkMap);
 }
 
 module.exports = {
   initSocket,
+  getIo,
   emitDevices,
   emitStates,
   emitSummary,
