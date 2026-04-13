@@ -127,11 +127,6 @@ function handleStateTopic(topic, payload) {
     return;
   }
 
-  if (isRecentlyRemoved(ieee)) {
-    console.log("Ignoring state for recently removed device:", ieee);
-    return;
-  }
-
   setDeviceState(ieee, friendlyName, payload);
   emitStates(getAllStates());
   emitSummary(getSummary());
