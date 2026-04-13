@@ -15,7 +15,7 @@ const {
   getAllStates,
   removeState,
   renameStateDeviceName,
-  cleanupStates,
+  getSummary,
 } = require("../store/stateStore");
 
 const {
@@ -32,8 +32,6 @@ const {
 } = require("../socket/socketServer");
 
 let client = null;
-let brokerConnected = false;
-let permitJoin = false;
 
 let latestNetworkMap = null;
 let latestNetworkMapAt = 0;
@@ -45,21 +43,6 @@ function safeJsonParse(message) {
   } catch (error) {
     return null;
   }
-}
-
-function getSummary() {
-  return {
-    brokerConnected,
-    permitJoin,
-    deviceCount: getAllDevices().length,
-    stateCount: getAllStates().length,
-  };
-}
-
-function broadcastAll() {
-  emitDevices(getAllDevices());
-  emitStates(getAllStates());
-  emitSummary(getSummary());
 }
 
 function publishAndWaitForResponse({
@@ -74,7 +57,7 @@ function publishAndWaitForResponse({
       return reject(new Error("MQTT not connected"));
     }
 
-    let finished = false;
+    let done = false;
 
     const timer = setTimeout(() => {
       cleanup();
@@ -95,8 +78,8 @@ function publishAndWaitForResponse({
     };
 
     function cleanup() {
-      if (finished) return;
-      finished = true;
+      if (done) return;
+      done = true;
       clearTimeout(timer);
       client.removeListener("message", handleMessage);
     }
@@ -112,183 +95,83 @@ function publishAndWaitForResponse({
   });
 }
 
-// function handleDeviceList(payload) {
-//   if (!Array.isArray(payload)) return;
-
-//   registerDevices(payload);
-//   emitDevices(getAllDevices());
-//   emitSummary(getSummary());
-// }
-function handleDeviceList(payload) {
-  if (!Array.isArray(payload)) return;
-
-  const devices = registerDevices(payload);
-
-  const validIeeeList = devices
-    .map((device) => device.ieee_address || device.ieeeAddr || device.ieee)
-    .filter(Boolean);
-
-  const removedCount = cleanupStates(validIeeeList);
-
-  if (removedCount > 0) {
-    console.log(`Removed ${removedCount} stale states from store`);
-  }
-
+function broadcastAll() {
   emitDevices(getAllDevices());
   emitStates(getAllStates());
   emitSummary(getSummary());
 }
-// function handleStateTopic(topic, payload) {
-//   const friendlyName = extractFriendlyNameFromTopic(topic);
-//   if (!friendlyName) return;
 
-//   const device = getDeviceByTopicName(friendlyName);
-//   const ieee = device?.ieee_address || device?.ieeeAddr || device?.ieee || null;
+function handleDeviceList(payload) {
+  if (!Array.isArray(payload)) return;
 
-//   if (!ieee) return;
+  const filtered = payload.filter(
+    (device) =>
+      device &&
+      (device.type !== "Coordinator" || device.friendly_name !== "Coordinator"),
+  );
 
-//   setDeviceState(ieee, friendlyName, payload);
-//   emitStates(getAllStates());
-//   emitSummary(getSummary());
-// }
+  registerDevices(filtered);
+  emitDevices(getAllDevices());
+  emitSummary(getSummary());
+}
 
 function handleStateTopic(topic, payload) {
   const friendlyName = extractFriendlyNameFromTopic(topic);
   if (!friendlyName) return;
 
-  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
-    return;
-  }
-
-  if (Object.keys(payload).length === 0) {
-    return;
-  }
-
   const device = getDeviceByTopicName(friendlyName);
-  if (!device) return;
 
   const ieee = device?.ieee_address || device?.ieeeAddr || device?.ieee || null;
-  if (!ieee) return;
+
+  if (!ieee) {
+    return;
+  }
 
   setDeviceState(ieee, friendlyName, payload);
-
   emitStates(getAllStates());
   emitSummary(getSummary());
 }
 
-function requestDeviceList() {
-  if (!client || !client.connected) {
-    console.log("MQTT not connected, cannot request device list");
-    return;
-  }
-
-  client.publish(mqttConfig.topics.deviceRequestList, "", (err) => {
-    if (err) {
-      console.error("Device list request failed:", err.message);
-    }
-  });
-}
-
 function startMqtt() {
-  if (client) return client;
+  if (client) {
+    return client;
+  }
 
   client = mqtt.connect(mqttConfig.broker, mqttConfig.options);
 
   client.on("connect", () => {
-    brokerConnected = true;
     console.log("MQTT connected:", mqttConfig.broker);
-
-    emitMqttStatus({
-      connected: true,
-      broker: mqttConfig.broker,
-    });
-
-    emitSummary(getSummary());
+    emitMqttStatus({ connected: true });
 
     client.subscribe(mqttConfig.topics.all, (err) => {
       if (err) {
         console.error("MQTT subscribe error:", err.message);
       } else {
         console.log("Subscribed to:", mqttConfig.topics.all);
-
-        setTimeout(() => {
-          requestDeviceList();
-        }, 1000);
       }
     });
   });
 
   client.on("reconnect", () => {
-    brokerConnected = false;
     console.log("MQTT reconnecting...");
-
-    emitMqttStatus({
-      connected: false,
-      reconnecting: true,
-      broker: mqttConfig.broker,
-    });
-
-    emitSummary(getSummary());
+    emitMqttStatus({ connected: false, reconnecting: true });
   });
 
   client.on("close", () => {
-    brokerConnected = false;
     console.log("MQTT connection closed");
-
-    emitMqttStatus({
-      connected: false,
-      broker: mqttConfig.broker,
-    });
-
-    emitSummary(getSummary());
+    emitMqttStatus({ connected: false });
   });
 
   client.on("error", (error) => {
     console.error("MQTT error:", error.message);
-
-    emitMqttStatus({
-      connected: false,
-      broker: mqttConfig.broker,
-      error: error.message,
-    });
+    emitMqttStatus({ connected: false, error: error.message });
   });
 
   client.on("message", (topic, message, packet) => {
     const payload = safeJsonParse(message);
 
-    if (topic === mqttConfig.topics.bridgeState) {
-      const stateText = message
-        .toString()
-        .replace(/"/g, "")
-        .trim()
-        .toLowerCase();
-      brokerConnected = stateText === "online";
-
-      emitMqttStatus({
-        connected: brokerConnected,
-        broker: mqttConfig.broker,
-        bridgeState: stateText,
-      });
-
-      emitSummary(getSummary());
-      return;
-    }
-
     if (topic === mqttConfig.topics.deviceList && Array.isArray(payload)) {
       handleDeviceList(payload);
-      return;
-    }
-
-    if (topic === mqttConfig.topics.permitJoinResponse && payload) {
-      if (typeof payload?.value === "boolean") {
-        permitJoin = payload.value;
-      } else if (typeof payload?.permit_join === "boolean") {
-        permitJoin = payload.permit_join;
-      } else if (payload?.data && typeof payload.data.value === "boolean") {
-        permitJoin = payload.data.value;
-      }
-
-      emitSummary(getSummary());
       return;
     }
 
@@ -305,7 +188,7 @@ function startMqtt() {
     }
 
     if (packet?.retain) {
-      console.log("Retained topic:", topic);
+      console.log("Retained message topic:", topic);
     }
   });
 
@@ -325,9 +208,6 @@ async function requestPermitJoin(seconds = 120) {
     payload,
     timeout: 10000,
   });
-
-  permitJoin = payload.time > 0;
-  emitSummary(getSummary());
 
   return response || { success: true, requested: payload.time };
 }
@@ -355,13 +235,7 @@ async function renameDevice(ieee, newName) {
   renameStateDeviceName(ieee, newName);
   broadcastAll();
 
-  return (
-    response || {
-      success: true,
-      ieee,
-      newName,
-    }
-  );
+  return response || { success: true, ieee, newName };
 }
 
 async function removeDevice(ieee) {
@@ -370,7 +244,6 @@ async function removeDevice(ieee) {
   }
 
   const device = getDeviceByIeee(ieee);
-
   const response = await publishAndWaitForResponse({
     requestTopic: mqttConfig.topics.deviceRemove,
     responseTopic: mqttConfig.topics.deviceRemoveResponse,
@@ -380,17 +253,6 @@ async function removeDevice(ieee) {
       block: false,
     },
     timeout: 30000,
-    validateResponse: (data) => {
-      if (!data || typeof data !== "object") return false;
-
-      const responseId =
-        data?.data?.id ||
-        data?.id ||
-        data?.data?.ieeeAddr ||
-        data?.data?.ieee_address;
-
-      return !responseId || responseId === ieee;
-    },
   });
 
   removeDeviceFromStore(ieee);
@@ -416,13 +278,11 @@ async function controlDevice(ieee, command = {}) {
   }
 
   const device = getDeviceByIeee(ieee);
-
   if (!device) {
     throw new Error("Device not found in store");
   }
 
   const topicName = device.friendly_name || device.friendlyName;
-
   if (!topicName) {
     throw new Error("Device friendly name not found");
   }
@@ -488,6 +348,4 @@ module.exports = {
   removeDevice,
   controlDevice,
   requestNetworkMap,
-  requestDeviceList,
-  getSummary,
 };

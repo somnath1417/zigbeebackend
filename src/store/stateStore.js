@@ -1,21 +1,17 @@
+const { getAllDevices } = require("./deviceStore");
+
 const statesByIeee = new Map();
 
 function setDeviceState(ieee, deviceName, payload = {}) {
   if (!ieee) return null;
-
-  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
-    return null;
-  }
-
-  if (Object.keys(payload).length === 0) {
-    return null;
-  }
 
   const previous = statesByIeee.get(ieee) || {};
 
   const next = {
     ...previous,
     ieee,
+    ieee_address: ieee,
+    ieeeAddr: ieee,
     deviceName: deviceName || previous.deviceName || "Unknown Device",
     payload: {
       ...(previous.payload || {}),
@@ -37,38 +33,67 @@ function getAllStates() {
 }
 
 function removeState(ieee) {
-  return statesByIeee.delete(ieee);
+  if (!ieee) return false;
+
+  console.log("Removing state for ieee:", ieee);
+  console.log("Before delete state keys:", Array.from(statesByIeee.keys()));
+
+  const deleted = statesByIeee.delete(ieee);
+
+  console.log("Deleted state:", deleted);
+  console.log("After delete state keys:", Array.from(statesByIeee.keys()));
+
+  return deleted;
 }
 
 function renameStateDeviceName(ieee, newName) {
-  const current = statesByIeee.get(ieee);
-  if (!current) return null;
+  const state = statesByIeee.get(ieee);
+  if (!state) return null;
 
   const updated = {
-    ...current,
+    ...state,
     deviceName: newName,
+    updatedAt: new Date().toISOString(),
   };
 
   statesByIeee.set(ieee, updated);
   return updated;
 }
 
-function clearAllStates() {
-  statesByIeee.clear();
-}
+function getSummary() {
+  const allStates = getAllStates();
+  const allDevices = getAllDevices();
 
-function cleanupStates(validIeeeList = []) {
-  const validSet = new Set(validIeeeList);
-  let removedCount = 0;
+  let online = 0;
+  let batteryDevices = 0;
+  let lowBattery = 0;
 
-  for (const ieee of statesByIeee.keys()) {
-    if (!validSet.has(ieee)) {
-      statesByIeee.delete(ieee);
-      removedCount += 1;
+  allStates.forEach((item) => {
+    const payload = item.payload || {};
+
+    if (
+      payload.state === "ON" ||
+      payload.occupancy === true ||
+      payload.contact === false
+    ) {
+      online += 1;
     }
-  }
 
-  return removedCount;
+    if (typeof payload.battery === "number") {
+      batteryDevices += 1;
+      if (payload.battery <= 20) {
+        lowBattery += 1;
+      }
+    }
+  });
+
+  return {
+    totalDevices: allDevices.length,
+    totalStates: allStates.length,
+    onlineLikeDevices: online,
+    batteryDevices,
+    lowBattery,
+  };
 }
 
 module.exports = {
@@ -77,6 +102,5 @@ module.exports = {
   getAllStates,
   removeState,
   renameStateDeviceName,
-  clearAllStates,
-  cleanupStates,
+  getSummary,
 };
