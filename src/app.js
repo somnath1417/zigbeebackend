@@ -47,6 +47,14 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(morgan("dev"));
 
+// root test route
+app.get("/", (req, res) => {
+  res.status(200).json({
+    success: true,
+    message: "Backend is running",
+  });
+});
+
 app.use("/api", deviceRoutes);
 
 module.exports = app;
