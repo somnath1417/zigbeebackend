@@ -32,10 +32,14 @@ const {
 } = require("../socket/socketServer");
 
 let client = null;
-
 let latestNetworkMap = null;
 let latestNetworkMapAt = 0;
+let mqttReady = false;
+
 const NETWORK_MAP_CACHE_MS = 60 * 1000;
+
+// state may arrive before bridge/devices
+const pendingStatesByFriendlyName = new Map();
 
 function safeJsonParse(message) {
   try {
@@ -101,18 +105,39 @@ function broadcastAll() {
   emitSummary(getSummary());
 }
 
+function flushPendingStates() {
+  const devices = getAllDevices();
+
+  devices.forEach((device) => {
+    const friendlyName = device?.friendly_name || device?.friendlyName;
+    const ieee = device?.ieee_address || device?.ieeeAddr || device?.ieee;
+
+    if (!friendlyName || !ieee) return;
+
+    const pendingPayload = pendingStatesByFriendlyName.get(friendlyName);
+    if (!pendingPayload) return;
+
+    setDeviceState(ieee, friendlyName, pendingPayload);
+    pendingStatesByFriendlyName.delete(friendlyName);
+  });
+}
+
 function handleDeviceList(payload) {
   if (!Array.isArray(payload)) return;
 
   const filtered = payload.filter(
     (device) =>
       device &&
-      (device.type !== "Coordinator" || device.friendly_name !== "Coordinator"),
+      device.type !== "Coordinator" &&
+      device.friendly_name !== "Coordinator",
   );
 
   registerDevices(filtered);
-  emitDevices(getAllDevices());
-  emitSummary(getSummary());
+
+  // attach any states that arrived earlier
+  flushPendingStates();
+
+  broadcastAll();
 }
 
 function handleStateTopic(topic, payload) {
@@ -120,10 +145,15 @@ function handleStateTopic(topic, payload) {
   if (!friendlyName) return;
 
   const device = getDeviceByTopicName(friendlyName);
-
   const ieee = device?.ieee_address || device?.ieeeAddr || device?.ieee || null;
 
   if (!ieee) {
+    // keep it temporarily until device list comes
+    const previous = pendingStatesByFriendlyName.get(friendlyName) || {};
+    pendingStatesByFriendlyName.set(friendlyName, {
+      ...previous,
+      ...payload,
+    });
     return;
   }
 
@@ -140,8 +170,9 @@ function startMqtt() {
   client = mqtt.connect(mqttConfig.broker, mqttConfig.options);
 
   client.on("connect", () => {
+    mqttReady = true;
     console.log("MQTT connected:", mqttConfig.broker);
-    emitMqttStatus({ connected: true });
+    emitMqttStatus({ connected: true, reconnecting: false, error: null });
 
     client.subscribe(mqttConfig.topics.all, (err) => {
       if (err) {
@@ -153,18 +184,25 @@ function startMqtt() {
   });
 
   client.on("reconnect", () => {
+    mqttReady = false;
     console.log("MQTT reconnecting...");
-    emitMqttStatus({ connected: false, reconnecting: true });
+    emitMqttStatus({ connected: false, reconnecting: true, error: null });
   });
 
   client.on("close", () => {
+    mqttReady = false;
     console.log("MQTT connection closed");
-    emitMqttStatus({ connected: false });
+    emitMqttStatus({ connected: false, reconnecting: false });
   });
 
   client.on("error", (error) => {
+    mqttReady = false;
     console.error("MQTT error:", error.message);
-    emitMqttStatus({ connected: false, error: error.message });
+    emitMqttStatus({
+      connected: false,
+      reconnecting: false,
+      error: error.message,
+    });
   });
 
   client.on("message", (topic, message, packet) => {
@@ -199,7 +237,13 @@ function getClient() {
   return client;
 }
 
+function isMqttReady() {
+  return mqttReady && !!client && client.connected;
+}
+
 async function requestPermitJoin(seconds = 120) {
+  console.log("seconds", seconds);
+
   const payload = { time: Number(seconds) || 120 };
 
   const response = await publishAndWaitForResponse({
@@ -244,6 +288,7 @@ async function removeDevice(ieee) {
   }
 
   const device = getDeviceByIeee(ieee);
+
   const response = await publishAndWaitForResponse({
     requestTopic: mqttConfig.topics.deviceRemove,
     responseTopic: mqttConfig.topics.deviceRemoveResponse,
@@ -342,6 +387,7 @@ async function requestNetworkMap(forceRefresh = false) {
 module.exports = {
   startMqtt,
   getClient,
+  isMqttReady,
   requestPermitJoin,
   stopPermitJoin,
   renameDevice,

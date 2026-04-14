@@ -5,6 +5,10 @@ const statesByIeee = new Map();
 function setDeviceState(ieee, deviceName, payload = {}) {
   if (!ieee) return null;
 
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return null;
+  }
+
   const previous = statesByIeee.get(ieee) || {};
 
   const next = {
@@ -34,16 +38,7 @@ function getAllStates() {
 
 function removeState(ieee) {
   if (!ieee) return false;
-
-  console.log("Removing state for ieee:", ieee);
-  console.log("Before delete state keys:", Array.from(statesByIeee.keys()));
-
-  const deleted = statesByIeee.delete(ieee);
-
-  console.log("Deleted state:", deleted);
-  console.log("After delete state keys:", Array.from(statesByIeee.keys()));
-
-  return deleted;
+  return statesByIeee.delete(ieee);
 }
 
 function renameStateDeviceName(ieee, newName) {

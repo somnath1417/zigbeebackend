@@ -1,17 +1,45 @@
+const { getAllDevices } = require("../store/deviceStore");
+const { getAllStates, getSummary } = require("../store/stateStore");
+
 let ioInstance = null;
+let latestBrokerStatus = {
+  connected: false,
+  reconnecting: false,
+  error: null,
+};
+let latestNetworkMap = null;
+
+function getAllowedOrigins() {
+  return [
+    process.env.FRONTEND_URL,
+    "http://localhost:3000",
+    "http://localhost:5173",
+  ].filter(Boolean);
+}
 
 function initSocket(server) {
   const { Server } = require("socket.io");
 
   ioInstance = new Server(server, {
     cors: {
-      origin: process.env.FRONTEND_URL || "*",
+      origin: getAllowedOrigins(),
       methods: ["GET", "POST", "PUT", "DELETE"],
+      credentials: true,
     },
   });
 
   ioInstance.on("connection", (socket) => {
     console.log("Socket connected:", socket.id);
+
+    // send current snapshot immediately
+    socket.emit("devices_update", getAllDevices());
+    socket.emit("states_update", getAllStates());
+    socket.emit("summary_update", getSummary());
+    socket.emit("broker_status", latestBrokerStatus);
+
+    if (latestNetworkMap) {
+      socket.emit("network_map_update", latestNetworkMap);
+    }
 
     socket.on("disconnect", () => {
       console.log("Socket disconnected:", socket.id);
@@ -40,12 +68,19 @@ function emitSummary(summary) {
 }
 
 function emitMqttStatus(status) {
+  latestBrokerStatus = {
+    ...latestBrokerStatus,
+    ...status,
+  };
+
   if (ioInstance) {
-    ioInstance.emit("broker_status", status);
+    ioInstance.emit("broker_status", latestBrokerStatus);
   }
 }
 
 function emitNetworkMap(data) {
+  latestNetworkMap = data;
+
   if (ioInstance) {
     ioInstance.emit("network_map_update", data);
   }

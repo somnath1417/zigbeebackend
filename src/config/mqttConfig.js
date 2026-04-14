@@ -14,6 +14,7 @@ module.exports = {
     reconnectPeriod: Number(process.env.MQTT_RECONNECT_PERIOD || 3000),
     connectTimeout: Number(process.env.MQTT_CONNECT_TIMEOUT || 30000),
     rejectUnauthorized: false,
+    clean: true,
   },
 
   baseTopic,

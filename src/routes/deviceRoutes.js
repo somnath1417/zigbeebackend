@@ -3,6 +3,7 @@ const router = express.Router();
 
 const { getAllDevices, getDeviceByIeee } = require("../store/deviceStore");
 const { getAllStates, getSummary } = require("../store/stateStore");
+const { isMqttReady } = require("../mqtt/mqttClient");
 
 const {
   requestPermitJoin,
@@ -16,11 +17,14 @@ const {
 /**
  * GET /api/devices
  */
+
 router.get("/devices", (req, res) => {
-  try {
+  try {   
     const devices = getAllDevices();
+
     res.json({
       success: true,
+      mqttReady: isMqttReady(),
       count: devices.length,
       data: devices,
     });
@@ -40,8 +44,10 @@ router.get("/devices", (req, res) => {
 router.get("/states", (req, res) => {
   try {
     const states = getAllStates();
+
     res.json({
       success: true,
+      mqttReady: isMqttReady(),
       count: states.length,
       data: states,
     });
@@ -66,6 +72,7 @@ router.get("/summary", (req, res) => {
 
     res.json({
       success: true,
+      mqttReady: isMqttReady(),
       data: {
         totalDevices: devices.length,
         totalStates: states.length,
@@ -80,6 +87,16 @@ router.get("/summary", (req, res) => {
       error: error.message,
     });
   }
+});
+
+/**
+ * GET /api/health
+ */
+router.get("/health", (req, res) => {
+  res.json({
+    success: true,
+    mqttReady: isMqttReady(),
+  });
 });
 
 /**
@@ -209,7 +226,7 @@ router.delete("/devices/:ieee", async (req, res) => {
 
 /**
  * POST /api/devices/:ieee/control
- * body: { state: "ON" } or any valid zigbee command payload
+ * body: any valid zigbee command payload
  */
 router.post("/devices/:ieee/control", async (req, res) => {
   try {
