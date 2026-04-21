@@ -18,6 +18,7 @@ const {
  * GET /api/devices
  */
 
+
 router.get("/devices", (req, res) => {
   try {   
     const devices = getAllDevices();

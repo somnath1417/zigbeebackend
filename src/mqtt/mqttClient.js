@@ -49,30 +49,120 @@ function safeJsonParse(message) {
   }
 }
 
+// function publishAndWaitForResponse({
+//   requestTopic,
+//   responseTopic,
+//   payload,
+//   timeout = 10000,
+//   validateResponse,
+// }) {
+//   return new Promise((resolve, reject) => {
+//     if (!client || !client.connected) {
+//       return reject(new Error("MQTT not connected"));
+//     }
+
+//     let done = false;
+
+//     const timer = setTimeout(() => {
+//       cleanup();
+//       reject(new Error(`Timeout waiting for response on ${responseTopic}`));
+//     }, timeout);
+
+//     const handleMessage = (topic, messageBuffer) => {
+//       if (topic !== responseTopic) return;
+
+//       const response = safeJsonParse(messageBuffer);
+
+//       if (validateResponse && !validateResponse(response)) {
+//         return;
+//       }
+
+//       cleanup();
+//       resolve(response);
+//     };
+
+//     function cleanup() {
+//       if (done) return;
+//       done = true;
+//       clearTimeout(timer);
+//       client.removeListener("message", handleMessage);
+//     }
+
+//     client.on("message", handleMessage);
+
+//     client.publish(requestTopic, JSON.stringify(payload), (err) => {
+//       if (err) {
+//         cleanup();
+//         reject(err);
+//       }
+//     });
+//   });
+// }
+
 function publishAndWaitForResponse({
   requestTopic,
   responseTopic,
   payload,
   timeout = 10000,
   validateResponse,
+  deviceIeee, // 👈 pass device id
+  retries = 1,
 }) {
   return new Promise((resolve, reject) => {
     if (!client || !client.connected) {
       return reject(new Error("MQTT not connected"));
     }
 
+    let attempt = 0;
     let done = false;
+    let timer;
 
-    const timer = setTimeout(() => {
-      cleanup();
-      reject(new Error(`Timeout waiting for response on ${responseTopic}`));
-    }, timeout);
+    const tryPublish = () => {
+      attempt++;
+
+      timer = setTimeout(() => {
+        if (attempt <= retries) {
+          console.warn(`Retrying... attempt ${attempt}`);
+          tryPublish();
+        } else {
+          cleanup();
+          reject(
+            new Error(
+              `Timeout: Device ${deviceIeee || ""} may be offline/sleeping`,
+            ),
+          );
+        }
+      }, timeout);
+
+      client.publish(requestTopic, JSON.stringify(payload), (err) => {
+        if (err) {
+          cleanup();
+          reject(err);
+        }
+      });
+    };
 
     const handleMessage = (topic, messageBuffer) => {
       if (topic !== responseTopic) return;
 
       const response = safeJsonParse(messageBuffer);
 
+      // 🔴 Handle Zigbee2MQTT error responses
+      if (response?.status === "error") {
+        cleanup();
+        return reject(new Error(response?.error || "Zigbee command failed"));
+      }
+
+      // 🔴 Handle device not reachable
+      if (
+        response?.error?.includes("not reachable") ||
+        response?.error?.includes("No response")
+      ) {
+        cleanup();
+        return reject(new Error(`Device ${deviceIeee} is offline or sleeping`));
+      }
+
+      // Optional custom validation
       if (validateResponse && !validateResponse(response)) {
         return;
       }
@@ -90,12 +180,8 @@ function publishAndWaitForResponse({
 
     client.on("message", handleMessage);
 
-    client.publish(requestTopic, JSON.stringify(payload), (err) => {
-      if (err) {
-        cleanup();
-        reject(err);
-      }
-    });
+    // 🚀 start first attempt
+    tryPublish();
   });
 }
 

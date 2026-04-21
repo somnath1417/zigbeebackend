@@ -2,7 +2,6 @@ const express = require("express");
 const cors = require("cors");
 const morgan = require("morgan");
 
-
 const deviceRoutes = require("./routes/deviceRoutes");
 
 const app = express();
@@ -42,10 +41,7 @@ app.use(express.urlencoded({ extended: true }));
 app.use(morgan("dev"));
 
 app.get("/", (req, res) => {
-  res.status(200).json({
-    success: true,
-    message: "Backend is running",
-  });
+  res.send("🔥 MY NEW BACKEND 🔥");
 });
 
 app.use("/api", (req, res, next) => {
